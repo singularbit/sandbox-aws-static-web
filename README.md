@@ -46,7 +46,7 @@ If all looks good, reply "y" to the prompt.
 
 5. After the pipeline has run, a new pipeline will have be created which will deploy the Lambdas.
 
-6. Once the CICD pipelines run successfully, you can test the API Gateway(s) via the Console.
+6. Once the CICD pipelines run successfully, you can access the Website in your browser.
 
 ### DESTROYING THE INFRASTRUCTURE
 

@@ -1,0 +1,289 @@
+version: 0.2
+
+env:
+  variables:
+    TERRAFORM_VERSION: 1.7.4
+    TERRATEST_VERSION: v0.13.13
+    TFSEC_VERSION: v1.28.4
+    TFLINT_VERSION: v0.48.0
+    BASE_PATH: .
+    RUN_TESTS: false
+
+phases:
+
+  install:
+    on-failure: ABORT
+    runtime-versions:
+      python: 3.11
+    commands:
+      - echo "Install Terraform..."
+      - chmod +x ${CODEBUILD_SRC_DIR}/cloudformation/scripts/terraform-install.sh
+      - ${CODEBUILD_SRC_DIR}/cloudformation/scripts/terraform-install.sh
+      - terraform --version
+
+      - echo "Install scanners..."
+      - chmod +x ${CODEBUILD_SRC_DIR}/cloudformation/scripts/scanners_install.sh
+      - ${CODEBUILD_SRC_DIR}/cloudformation/scripts/scanners_install.sh | tee
+
+  pre_build:
+    commands:
+      - chmod +x ${CODEBUILD_SRC_DIR}/cloudformation/scripts/scanners_run_1.sh
+      - ${CODEBUILD_SRC_DIR}/cloudformation/scripts/scanners_run_1.sh | tee
+
+  build:
+    on-failure: ABORT
+    commands:
+#      - echo "Running snyk..."
+      - cd ./${BASE_PATH}/terraform
+      - ls -la && pwd
+#      - snyk iac test . --severity-threshold=critical
+
+      - echo "Running Terraform..."
+      - echo $TF_STATE_S3_BUCKET $TF_STATE_KEY $TF_STATE_DYNAMODB_TABLE $AWS_DEFAULT_REGION
+      - >
+        terraform init
+        -backend-config="bucket=${TF_STATE_S3_BUCKET}"
+        -backend-config="key=${TF_STATE_KEY}"
+        -backend-config="region=${AWS_DEFAULT_REGION}"
+        -backend-config="dynamodb_table=${TF_STATE_DYNAMODB_TABLE}"
+        -backend-config="encrypt=true"
+      - terraform plan -var-file=${TFVARS_FILE} -out=tfplan.binary
+      - terraform show -json tfplan.binary > tfplan.json
+
+      - chmod +x ${CODEBUILD_SRC_DIR}/cloudformation/scripts/scanners_run_2.sh
+      - ${CODEBUILD_SRC_DIR}/cloudformation/scripts/scanners_run_2.sh | tee
+
+  post_build:
+    commands:
+      - echo "BuildSpec completed on `date`"
+
+artifacts:
+  name: PlanOutput
+  files:
+    - ./${BASE_PATH}/terraform/tfplan.binary
+
+#version: 0.2
+#
+#env:
+#  variables:
+#    TERRAFORM_VERSION: 1.6.6
+#    TERRATEST_VERSION: v0.13.13
+#    TFSEC_VERSION: v1.28.4
+#    TFLINT_VERSION: v0.48.0
+#    BASE_PATH: .
+#
+##  parameter-store:
+##    SNYK_TOKEN: /snyk/token
+#
+#phases:
+#
+#  install:
+#    on-failure: ABORT
+#    runtime-versions:
+#      python: 3.11
+#    commands:
+#      - echo "Install Terraform..."
+#      - chmod +x cloudformation/scripts/terraform-install.sh
+#      - cloudformation/scripts/terraform-install.sh
+#      - terraform --version
+#
+#      - echo "Install tfsec..."
+#      - curl -Lso tfsec https://github.com/aquasecurity/tfsec/releases/download/${TFSEC_VERSION}/tfsec-linux-amd64
+#      - chmod +x tfsec
+#      - sudo mv tfsec /usr/local/bin/tfsec
+#      - tfsec --version
+#
+#      - echo "Install tflint..."
+#      - curl -Lso tflint_linux_amd64.zip https://github.com/terraform-linters/tflint/releases/download/${TFLINT_VERSION}/tflint_linux_amd64.zip
+#      - unzip tflint_linux_amd64.zip
+#      - chmod +x tflint
+#      - sudo mv tflint /usr/local/bin/tflint
+#      - tflint --version
+#
+#      - echo "Install checkov..."
+#      - pip install checkov
+#      - checkov --versio
+#
+##      - echo "Intall snyk..."
+##      - npm install -g snyk@latest -g
+#
+#  pre_build:
+#    commands:
+#      - echo "Running tflint..."
+#      - ls -la && pwd
+#      - tflint
+#
+#  build:
+#    on-failure: ABORT
+#    commands:
+##      - echo "Running snyk..."
+#      - cd ./${BASE_PATH}/terraform
+#      - ls -la && pwd
+##      - snyk iac test . --severity-threshold=critical
+#
+#      - echo "Running Terraform..."
+#      - echo $TF_STATE_S3_BUCKET $TF_STATE_KEY $TF_STATE_DYNAMODB_TABLE $AWS_DEFAULT_REGION
+#      - >
+#        terraform init
+#        -backend-config="bucket=${TF_STATE_S3_BUCKET}"
+#        -backend-config="key=${TF_STATE_KEY}"
+#        -backend-config="region=${AWS_DEFAULT_REGION}"
+#        -backend-config="dynamodb_table=${TF_STATE_DYNAMODB_TABLE}"
+#        -backend-config="encrypt=true"
+#      - terraform plan -out=tfplan.binary
+#      - terraform show -json tfplan.binary > tfplan.json
+#
+##      - echo "Running snyk..."
+##      - snyk iac test tf-plan.json --severity-threshold=critical
+#
+#      - echo "Running tfsec..."
+#      - tfsec --no-colour --format json --tfvars-file terraform.tfvars | tee tfsec-out.json
+#      - cat tfsec-out.json | jq -r '.results[] | select(.severity == "CRITICAL") | .rule_id' | tee tfsec-critical.txt
+#
+#       # reference: https://www.checkov.io/7.Scan%20Examples/Terraform%20Plan%20Scanning.html
+#      - echo "Running checkov..."
+#      - checkov --quiet --soft-fail -f tfplan.json
+#
+##Check: CKV_AWS_310: "Ensure CloudFront distributions should have origin failover configured"
+##    FAILED for resource: module.cdn_4_static_website.aws_cloudfront_distribution.cloudfront_distribution
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/bc-aws-310
+##Check: CKV_AWS_68: "CloudFront Distribution should have WAF enabled"
+##    FAILED for resource: module.cdn_4_static_website.aws_cloudfront_distribution.cloudfront_distribution
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/bc-aws-general-27
+##Check: CKV_AWS_316: "Ensure CodeBuild project environments do not have privileged mode enabled"
+##    FAILED for resource: module.static_website_pipeline.aws_codebuild_project.codebuild_deployment["build"]
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/bc-aws-316
+##Check: CKV_AWS_316: "Ensure CodeBuild project environments do not have privileged mode enabled"
+##    FAILED for resource: module.static_website_pipeline.aws_codebuild_project.codebuild_deployment["cdn"]
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/bc-aws-316
+##Check: CKV_AWS_316: "Ensure CodeBuild project environments do not have privileged mode enabled"
+##    FAILED for resource: module.static_website_pipeline.aws_codebuild_project.codebuild_deployment["deploy"]
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/bc-aws-316
+##Check: CKV_AWS_219: "Ensure CodePipeline Artifact store is using a KMS CMK"
+##    FAILED for resource: module.static_website_pipeline.aws_codepipeline.codepipeline
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/ensure-aws-codepipeline-artifactstore-is-not-encrypted-by-key-management-service-kms-using-a-customer-managed-key-cmk
+##Check: CKV_AWS_274: "Disallow IAM roles, users, and groups from using the AWS AdministratorAccess policy"
+##    FAILED for resource: module.static_website_pipeline.aws_iam_role.codebuild_role
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-iam-policies/bc-aws-274
+##Check: CKV_AWS_289: "Ensure IAM policies does not allow permissions management / resource exposure without constraints"
+##    FAILED for resource: module.static_website_pipeline.aws_iam_role_policy.codebuild_policy
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-iam-policies/bc-aws-289
+##Check: CKV_AWS_355: "Ensure no IAM policies documents allow "*" as a statement's resource for restrictable actions"
+##    FAILED for resource: module.static_website_pipeline.aws_iam_role_policy.codebuild_policy
+##    File: /tfplan.json:0-0
+##Check: CKV_AWS_290: "Ensure IAM policies does not allow write access without constraints"
+##    FAILED for resource: module.static_website_pipeline.aws_iam_role_policy.codebuild_policy
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-iam-policies/bc-aws-290
+##Check: CKV_AWS_355: "Ensure no IAM policies documents allow "*" as a statement's resource for restrictable actions"
+##    FAILED for resource: module.static_website_pipeline.aws_iam_role_policy.codepipeline_policy
+##    File: /tfplan.json:0-0
+##Check: CKV_AWS_290: "Ensure IAM policies does not allow write access without constraints"
+##    FAILED for resource: module.static_website_pipeline.aws_iam_role_policy.codepipeline_policy
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-iam-policies/bc-aws-290
+##Check: CKV_AWS_274: "Disallow IAM roles, users, and groups from using the AWS AdministratorAccess policy"
+##    FAILED for resource: module.static_website_pipeline.aws_iam_role_policy_attachment.codebuild_deploy[0]
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-iam-policies/bc-aws-274
+##Check: CKV2_AWS_32: "Ensure CloudFront distribution has a response headers policy attached"
+##    FAILED for resource: module.cdn_4_static_website.aws_cloudfront_distribution.cloudfront_distribution
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.bridgecrew.io/docs/bc_aws_networking_65
+##Check: CKV2_AWS_47: "Ensure AWS CloudFront attached WAFv2 WebACL is configured with AMR for Log4j Vulnerability"
+##    FAILED for resource: module.cdn_4_static_website.aws_cloudfront_distribution.cloudfront_distribution
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/aws-general-policies/bc-aws-general-47
+##Check: CKV2_AWS_65: "Ensure access control lists for S3 buckets are disabled"
+##    FAILED for resource: module.s3_4_cdn_logs.aws_s3_bucket_ownership_controls.s3_bucket_ownership_controls[0]
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/bc-aws-general-112
+##Check: CKV2_AWS_65: "Ensure access control lists for S3 buckets are disabled"
+##    FAILED for resource: module.s3_4_codebuild_logs.aws_s3_bucket_ownership_controls.s3_bucket_ownership_controls[0]
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/bc-aws-general-112
+##Check: CKV2_AWS_65: "Ensure access control lists for S3 buckets are disabled"
+##    FAILED for resource: module.s3_4_codepipeline_artifacts.aws_s3_bucket_ownership_controls.s3_bucket_ownership_controls[0]
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/bc-aws-general-112
+##Check: CKV2_AWS_65: "Ensure access control lists for S3 buckets are disabled"
+##    FAILED for resource: module.s3_4_static_website.aws_s3_bucket_ownership_controls.s3_bucket_ownership_controls[0]
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/bc-aws-general-112
+##Check: CKV2_AWS_62: "Ensure S3 buckets should have event notifications enabled"
+##    FAILED for resource: module.s3_4_cdn_logs.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-logging-policies/bc-aws-2-62
+##Check: CKV2_AWS_62: "Ensure S3 buckets should have event notifications enabled"
+##    FAILED for resource: module.s3_4_codebuild_logs.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-logging-policies/bc-aws-2-62
+##Check: CKV2_AWS_62: "Ensure S3 buckets should have event notifications enabled"
+##    FAILED for resource: module.s3_4_codepipeline_artifacts.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-logging-policies/bc-aws-2-62
+##Check: CKV2_AWS_62: "Ensure S3 buckets should have event notifications enabled"
+##    FAILED for resource: module.s3_4_static_website.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-logging-policies/bc-aws-2-62
+##Check: CKV2_AWS_6: "Ensure that S3 bucket has a Public Access block"
+##    FAILED for resource: module.s3_4_cdn_logs.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-networking-policies/s3-bucket-should-have-public-access-blocks-defaults-to-false-if-the-public-access-block-is-not-attached
+##Check: CKV2_AWS_6: "Ensure that S3 bucket has a Public Access block"
+##    FAILED for resource: module.s3_4_codebuild_logs.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-networking-policies/s3-bucket-should-have-public-access-blocks-defaults-to-false-if-the-public-access-block-is-not-attached
+##Check: CKV2_AWS_6: "Ensure that S3 bucket has a Public Access block"
+##    FAILED for resource: module.s3_4_codepipeline_artifacts.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-networking-policies/s3-bucket-should-have-public-access-blocks-defaults-to-false-if-the-public-access-block-is-not-attached
+##Check: CKV2_AWS_6: "Ensure that S3 bucket has a Public Access block"
+##    FAILED for resource: module.s3_4_static_website.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-networking-policies/s3-bucket-should-have-public-access-blocks-defaults-to-false-if-the-public-access-block-is-not-attached
+##Check: CKV_AWS_144: "Ensure that S3 bucket has cross-region replication enabled"
+##    FAILED for resource: module.s3_4_cdn_logs.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/ensure-that-s3-bucket-has-cross-region-replication-enabled
+##Check: CKV_AWS_144: "Ensure that S3 bucket has cross-region replication enabled"
+##    FAILED for resource: module.s3_4_codebuild_logs.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/ensure-that-s3-bucket-has-cross-region-replication-enabled
+##Check: CKV_AWS_144: "Ensure that S3 bucket has cross-region replication enabled"
+##    FAILED for resource: module.s3_4_codepipeline_artifacts.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/ensure-that-s3-bucket-has-cross-region-replication-enabled
+##Check: CKV_AWS_144: "Ensure that S3 bucket has cross-region replication enabled"
+##    FAILED for resource: module.s3_4_static_website.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/ensure-that-s3-bucket-has-cross-region-replication-enabled
+##Check: CKV_AWS_21: "Ensure all data stored in the S3 bucket have versioning enabled"
+##    FAILED for resource: module.s3_4_codebuild_logs.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/s3-policies/s3-16-enable-versioning
+##Check: CKV_AWS_21: "Ensure all data stored in the S3 bucket have versioning enabled"
+##    FAILED for resource: module.s3_4_static_website.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/s3-policies/s3-16-enable-versioning
+##Check: CKV_AWS_145: "Ensure that S3 buckets are encrypted with KMS by default"
+##    FAILED for resource: module.s3_4_static_website.aws_s3_bucket.s3_bucket
+##    File: /tfplan.json:0-0
+##    Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/ensure-that-s3-buckets-are-encrypted-with-kms-by-default
+##
+#  post_build:
+#    commands:
+#      - echo "BuildSpec completed on `date`"
+#
+#artifacts:
+#  name: PlanOutput
+#  files:
+#    - ./${BASE_PATH}/terraform/tfplan.binary

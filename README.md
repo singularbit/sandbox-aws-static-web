@@ -44,7 +44,7 @@ If all looks good, reply "y" to the prompt.
 
 4. Manually release the new pipeline.
 
-5. After the pipeline has run, a new pipeline will have be created which will deploy the Lambdas.
+5. After the pipeline has run, a new pipeline (or many) will have be created which will deploy the new website(s).
 
 6. Once the CICD pipelines run successfully, you can access the Website in your browser.
 
